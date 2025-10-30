@@ -1,0 +1,7 @@
+{
+  "cooldown_period": {
+    "description": "硬件信息查询冷却时间（单位：秒）",
+    "type": "int",
+    "default": 60
+  }
+}
