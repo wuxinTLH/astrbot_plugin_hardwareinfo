@@ -13,22 +13,22 @@ import aiohttp
 import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 @register(
     "astrbot_plugin_hardwareinfo",
     "SakuraMikku",
     "硬件信息查询（CPU/GPU搜索+天梯图+参数图片）",
-    "0.0.1",
+    "0.0.2",
     "https://github.com/wuxinTLH/astrbot_plugin_hardwareinfo"
 )
 class HardwareInfoPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context, config)
         # 基础配置
-        self.cooldown_period = config.get("cooldown_period", 30)  # 搜索冷却时间（秒）
-        self.cache_ttl = config.get("cache_ttl", 60)  # 缓存有效期（秒）
+        self.cooldown_period = config.get("cooldown_period", 30)
+        self.cache_ttl = config.get("cache_ttl", 60)
         self.temp_id_expire = 600
         self.base_dir = os.path.dirname(__file__)
         
@@ -67,49 +67,116 @@ class HardwareInfoPlugin(Star):
             "gpu": "https://www.techpowerup.com/gpu-specs/"
         }
         
-        # 参数映射
+        # 参数中文映射（完善版）
         self.param_cn_map: Dict[str, str] = {
-            "Base Clock": "基础频率", "Boost Clock": "加速频率",
-            "Memory Clock": "显存频率", "Memory Size": "显存容量",
-            "Memory Type": "显存类型", "Memory Bus": "显存位宽",
-            "Bandwidth": "显存带宽", "TDP": "功耗(TDP)",
-            "Socket": "接口类型", "Foundry": "生产工艺",
-            "Process Size": "制程工艺", "Transistors": "晶体管数量",
-            "Die Size": "核心面积", "Market": "适用市场",
-            "Release Date": "发布日期", "Launch Price": "首发价格",
-            "# of Cores": "核心数", "# of Threads": "线程数",
-            "Cache L1": "L1缓存", "Cache L2": "L2缓存",
-            "Cache L3": "L3缓存", "Frequency": "基础频率",
-            "Turbo Clock": "加速频率", "Multiplier": "倍频",
-            "Memory Support": "内存支持", "Rated Speed": "内存频率",
-            "Memory Bandwidth": "内存带宽", "Shading Units": "流处理器",
-            "TMUs": "纹理单元", "ROPs": "光栅单元",
-            "SM Count": "SM单元数", "Tensor Cores": "张量核心",
-            "RT Cores": "光线追踪核心", "Slot Width": "插槽宽度",
-            "Length": "显卡长度", "Height": "显卡高度",
-            "Width": "显卡厚度", "Suggested PSU": "建议电源",
-            "Outputs": "视频输出", "Power Connectors": "供电接口",
-            "DirectX": "DirectX版本", "OpenGL": "OpenGL版本",
-            "OpenCL": "OpenCL版本", "Vulkan": "Vulkan版本",
-            "CUDA": "CUDA版本", "Shader Model": "着色器模型"
+            # 基础参数
+            "Name": "名称",
+            "Codename": "代号",
+            "Architecture": "架构",
+            "Manufacturer": "制造商",
+            "Released": "发布日期",
+            "Launch Price": "首发价格",
+            "Market Segment": "市场定位",
+            
+            # CPU参数
+            "Socket": "接口类型",
+            "Core Count": "核心数",
+            "Thread Count": "线程数",
+            "Base Clock": "基础频率",
+            "Boost Clock": "加速频率",
+            "All-Core Boost": "全核加速频率",
+            "TDP": "功耗(TDP)",
+            "TDP Up": "最大功耗",
+            "TDP Down": "最小功耗",
+            "Process Size": "制程工艺",
+            "Transistors": "晶体管数量",
+            "Die Size": "核心面积",
+            "L1 Cache": "L1缓存",
+            "L2 Cache": "L2缓存",
+            "L3 Cache": "L3缓存",
+            "Memory Support": "内存支持",
+            "Memory Channels": "内存通道数",
+            "ECC Memory": "ECC内存支持",
+            "PCIe Version": "PCIe版本",
+            "PCIe Lanes": "PCIe通道数",
+            "Instruction Set": "指令集",
+            "Virtualization": "虚拟化支持",
+            "Thermal Solution": "散热方案",
+            
+            # GPU参数
+            "GPU Name": "GPU名称",
+            "GPU Variant": "GPU变种",
+            "Launch Date": "发布日期",
+            "Bus Interface": "总线接口",
+            "Memory Size": "显存容量",
+            "Memory Type": "显存类型",
+            "Memory Bus": "显存位宽",
+            "Memory Clock": "显存频率",
+            "Memory Bandwidth": "显存带宽",
+            "Shading Units": "流处理器",
+            "TMUs": "纹理单元",
+            "ROPs": "光栅单元",
+            "SM Count": "SM单元数",
+            "Tensor Cores": "张量核心",
+            "RT Cores": "光线追踪核心",
+            "Compute Units": "计算单元",
+            "Pixel Fillrate": "像素填充率",
+            "Texture Fillrate": "纹理填充率",
+            "FP32 Performance": "FP32性能",
+            "TDP": "功耗(TDP)",
+            "Board Power": "板卡功耗",
+            "Suggested PSU": "建议电源",
+            "Power Connectors": "供电接口",
+            "Slot Width": "插槽宽度",
+            "Length": "显卡长度",
+            "Height": "显卡高度",
+            "Width": "显卡厚度",
+            "Outputs": "视频输出",
+            "DirectX": "DirectX版本",
+            "OpenGL": "OpenGL版本",
+            "OpenCL": "OpenCL版本",
+            "Vulkan": "Vulkan版本",
+            "CUDA": "CUDA版本",
+            "Shader Model": "着色器模型",
+            "Max Resolution": "最大分辨率",
+            "Multi Monitor": "多显示器支持",
+            "HDCP": "HDCP支持",
+            "Cooler": "散热器类型",
+            "LED Lighting": "LED灯效",
+            "Transistors": "晶体管数量",
+            "Die Size": "核心面积",
+            "Manufacturing Process": "制造工艺"
         }
         
-        # 数据存储
-        self.search_cache = {}
-        self.last_called_times = {}
+        # 数据存储（用户+群组隔离）
+        self.search_cache: Dict[Tuple[str, str], Dict[str, Dict]] = {}
+        self.last_called_times: Dict[Tuple[str, str], Dict[str, float]] = {}
 
-    def _get_user_id(self, event: AstrMessageEvent) -> str:
+    def _get_identity(self, event: AstrMessageEvent) -> Tuple[str, str]:
+        """强化群组ID获取，确保跨群组隔离"""
+        # 获取用户ID
         user_id = getattr(event, "user_id", None) or \
                   getattr(getattr(event, "sender", None), "user_id", None) or \
-                  getattr(getattr(event, "from_user", None), "id", None)
+                  getattr(getattr(event, "from_user", None), "id", None) or \
+                  getattr(getattr(event, "author", None), "id", None)
+        user_id = str(user_id) if user_id else f"temp_{int(time.time()//self.temp_id_expire)}"
         
-        if user_id:
-            return str(user_id)
+        # 获取群组ID
+        group_id = getattr(event, "group_id", None)
+        if not group_id:
+            session = getattr(event, "session", None)
+            group_id = getattr(session, "group_id", None) if session else None
+        if not group_id:
+            group = getattr(event, "group", None)
+            group_id = getattr(group, "id", None) if group else None
+        if not group_id:
+            private_mark = hash(f"{user_id}_{int(time.time()//3600)}")
+            group_id = f"private_{private_mark}"
+        else:
+            group_id = str(group_id)
         
-        timestamp_trunc = int(time.time()) // self.temp_id_expire * self.temp_id_expire
-        temp_id = f"temp_qqwebhook_{timestamp_trunc}"
-        logger.warning(f"未获取到用户ID，使用临时标识：{temp_id}")
-        return temp_id
+        logger.debug(f"[身份隔离] 用户ID：{user_id} | 群组ID：{group_id}")
+        return (user_id, group_id)
 
     def _clean_text(self, text: str) -> str:
         if not isinstance(text, str):
@@ -119,9 +186,10 @@ class HardwareInfoPlugin(Star):
         text = re.sub(r'<at[^>]+>.*?</at>', "", text)
         return text.strip()
 
-    def _is_on_cooldown(self, user_id: str, hardware_type: str) -> tuple[bool, float]:
+    def _is_on_cooldown(self, identity: Tuple[str, str], hardware_type: str) -> tuple[bool, float]:
+        """检查冷却时间（基于用户+群组）"""
         current_time = time.time()
-        user_cooldowns = self.last_called_times.get(user_id, {})
+        user_cooldowns = self.last_called_times.get(identity, {})
         last_call_time = user_cooldowns.get(hardware_type, 0)
         remaining_time = self.cooldown_period - (current_time - last_call_time)
         
@@ -209,15 +277,17 @@ class HardwareInfoPlugin(Star):
                     "detail_url": urljoin(self.tpu_base["cpu"], name_tag.get("href", ""))
                 })
         
-        else:
+        else:  # GPU解析（兼容Intel/NVIDIA/AMD）
             gpu_table = soup.select_one('div#list table.items-desktop-table')
             if not gpu_table:
                 logger.warning("[GPU] 未找到结果表格")
                 return results
             
-            all_tds = gpu_table.find_all("td", recursive=False)
+            all_tds = [td for td in gpu_table.find_all("td", recursive=False) 
+                      if not td.find_parent("thead")]
+            
             if len(all_tds) < 6:
-                logger.warning(f"[GPU] 有效TD数量不足：{len(all_tds)}个")
+                logger.warning(f"[GPU] 有效数据单元不足：{len(all_tds)}个")
                 return results
             
             gpu_td_groups = [all_tds[i:i+6] for i in range(0, len(all_tds), 6)]
@@ -236,16 +306,17 @@ class HardwareInfoPlugin(Star):
                 relative_href = name_tag.get("href", "")
                 full_url = urljoin(self.tpu_base["gpu"], relative_href)
                 
-                if gpu_name and any(keyword in gpu_name.lower() for keyword in ["geforce", "radeon", "rtx", "rx"]):
+                if gpu_name:
                     results.append({
                         "name": gpu_name,
                         "detail_url": full_url
                     })
         
-        logger.info(f"[{hardware_type.upper()}] 解析完成：{len(results)}条结果")
+        logger.info(f"[{hardware_type.upper()}] 搜索完成，找到{len(results)}条结果")
         return results
 
     def _translate_param_name(self, param_name: str) -> str:
+        """参数名中文化"""
         cleaned_name = param_name.strip().rstrip(':')
         return self.param_cn_map.get(cleaned_name, cleaned_name)
 
@@ -308,7 +379,7 @@ class HardwareInfoPlugin(Star):
             img.save(img_path, "PNG")
             return img_path
 
-        # 绘制标题（确保硬件名称正确显示）
+        # 绘制标题
         title = f"{hardware_type.upper()} 参数详情：{hardware_name}"
         title_bbox = draw.textbbox((0, 0), title, font=title_font)
         title_x = (img_width - (title_bbox[2] - title_bbox[0])) // 2
@@ -348,17 +419,14 @@ class HardwareInfoPlugin(Star):
         return img_path
 
     def _parse_detail_info(self, hardware_type: str, html: str) -> tuple[List[str], str]:
-        """修复硬件名称显示为"未知参数"的问题"""
         if not html:
             return ["详情页获取失败"], ""
         
         soup = BeautifulSoup(html, "lxml")
         param_data = []
         
-        # 核心修复：增强硬件名称获取逻辑，避免"未知参数"
-        hardware_name = "未知硬件"  # 默认值改为"未知硬件"更合理
-        
-        # 尝试多种方式获取标题，提高成功率
+        # 获取硬件名称
+        hardware_name = "未知硬件"
         title_tag = soup.select_one('h1.pagetitle') or \
                    soup.select_one('h1.page-title') or \
                    soup.select_one('div#content h1') or \
@@ -366,7 +434,6 @@ class HardwareInfoPlugin(Star):
         
         if title_tag:
             hardware_name = title_tag.get_text(strip=True)
-            # 过滤可能的无效标题
             if len(hardware_name) < 2 or hardware_name.lower() in ["specifications", "details"]:
                 hardware_name = "获取名称失败"
         
@@ -395,7 +462,12 @@ class HardwareInfoPlugin(Star):
                 "Performance": "性能参数",
                 "Architecture": "架构参数",
                 "Core Config": "核心配置",
-                "Cache": "缓存配置"
+                "Cache": "缓存配置",
+                "Memory Specifications": "内存规格",
+                "Expansion": "扩展接口",
+                "Power Management": "电源管理",
+                "Thermals": "散热参数",
+                "General Specifications": "基本规格"
             }.get(section_title_en, section_title_en)
             
             if section_title_en in ["Notes", "Features", "GB202 GPU Notes"]:
@@ -454,11 +526,11 @@ class HardwareInfoPlugin(Star):
         return self._parse_detail_info(hardware_type, html)
 
     async def _handle_hardware_query(self, event: AstrMessageEvent, hardware_type: str) -> None:
-        """修复冷却时间逻辑：只在搜索型号时应用CD，查看详情无CD"""
-        user_id = self._get_user_id(event)
+        """核心处理逻辑（修复跨群组缓存问题）"""
+        identity = self._get_identity(event)
         raw_message = getattr(event, "message_str", "") or ""
         clean_message = self._clean_text(raw_message)
-        logger.info(f"[用户{user_id}] 指令：{clean_message}")
+        logger.info(f"[用户{identity[0]}@群组{identity[1]}] 指令：{clean_message}")
         
         if not clean_message:
             yield event.plain_result(
@@ -480,10 +552,12 @@ class HardwareInfoPlugin(Star):
             )
             return
         
-        user_cache = self.search_cache.get(user_id, {}).get(hardware_type, {})
+        # 获取当前身份的缓存
+        user_cache = self.search_cache.get(identity, {}).get(hardware_type, {})
         cache_valid = user_cache and time.time() < user_cache.get("expire", 0)
+        logger.debug(f"[缓存状态] {identity} | {hardware_type} | 有效：{cache_valid}")
         
-        # 无参数：返回天梯图（无CD）
+        # 无参数：返回天梯图
         if param is None:
             img_path = await self._get_ranking_image(hardware_type)
             if img_path:
@@ -492,24 +566,29 @@ class HardwareInfoPlugin(Star):
                 yield event.plain_result(f"[{hardware_type.upper()}] 天梯图获取失败")
             return
         
-        # 有参数：区分是搜索还是查看详情
-        if param.isdigit() and cache_valid:
-            # 查看详情：无CD限制
+        # 优化序号判断逻辑
+        is_valid_index = False
+        if param.isdigit():
+            idx = int(param) - 1
+            if cache_valid and user_cache.get("results"):
+                result_count = len(user_cache["results"])
+                if 0 <= idx < result_count:
+                    is_valid_index = True
+        
+        if is_valid_index:
+            # 查看详情
             idx = int(param) - 1
             results = user_cache["results"]
-            if 0 <= idx < len(results):
-                selected = results[idx]
-                yield event.plain_result(f"[{hardware_type.upper()}] 正在生成「{selected['name']}」参数图片...")
-                param_data, img_path = await self._get_hardware_detail(hardware_type, selected["detail_url"])
-                if img_path and os.path.exists(img_path):
-                    yield event.image_result(img_path)
-                else:
-                    yield event.plain_result(f"[{hardware_type.upper()}] 参数图片生成失败，参数如下：\n" + "\n".join(param_data))
+            selected = results[idx]
+            yield event.plain_result(f"[{hardware_type.upper()}] 正在生成「{selected['name']}」参数图片...")
+            param_data, img_path = await self._get_hardware_detail(hardware_type, selected["detail_url"])
+            if img_path and os.path.exists(img_path):
+                yield event.image_result(img_path)
             else:
-                yield event.plain_result(f"[{hardware_type.upper()}] 序号无效！可选范围1-{len(results)}")
+                yield event.plain_result(f"[{hardware_type.upper()}] 参数图片生成失败，参数如下：\n" + "\n".join(param_data))
         else:
-            # 搜索型号：应用CD限制
-            on_cooldown, remaining = self._is_on_cooldown(user_id, hardware_type)
+            # 搜索型号
+            on_cooldown, remaining = self._is_on_cooldown(identity, hardware_type)
             if on_cooldown:
                 yield event.plain_result(f"[{hardware_type.upper()}] 冷却中，请{remaining}秒后再试")
                 return
@@ -521,13 +600,14 @@ class HardwareInfoPlugin(Star):
             
             if not results:
                 yield event.plain_result(f"[{hardware_type.upper()}] 未找到「{param}」相关型号")
-                # 搜索无结果也记录冷却时间，防止恶意查询
-                self.last_called_times.setdefault(user_id, {})[hardware_type] = time.time()
+                self.last_called_times.setdefault(identity, {})[hardware_type] = time.time()
                 return
             
-            self.search_cache[user_id] = {
+            # 缓存当前群组的搜索结果
+            self.search_cache[identity] = {
                 hardware_type: {"results": results, "expire": time.time() + self.cache_ttl}
             }
+            logger.debug(f"[缓存更新] {identity} | {hardware_type} | 结果数：{len(results)}")
             
             list_text = f"[{hardware_type.upper()}] 搜索结果（共{len(results)}条）：\n"
             for i, item in enumerate(results, 1):
@@ -535,21 +615,29 @@ class HardwareInfoPlugin(Star):
             list_text += f"回复「{hardware_type} 序号」查看详情"
             yield event.plain_result(list_text)
             
-            # 只有搜索操作才更新冷却时间
-            self.last_called_times.setdefault(user_id, {})[hardware_type] = time.time()
+            # 更新冷却时间
+            self.last_called_times.setdefault(identity, {})[hardware_type] = time.time()
 
     @filter.command("cpu")
     async def cpu_info(self, event: AstrMessageEvent):
+        """查询CPU天梯榜图或型号信息
+        /CPU <型号> 不携带参数返回天梯榜图，携带参数返回搜索结果
+        /cpu <序号> 根据搜索结果的选择返回具体参数
+        """
         async for result in self._handle_hardware_query(event, "cpu"):
             yield result
 
     @filter.command("gpu")
     async def gpu_info(self, event: AstrMessageEvent):
+        """查询GPU天梯榜图或型号信息
+        /GPU <型号> 不携带参数返回天梯榜图，携带参数返回搜索结果
+        /gpu <序号> 根据搜索结果的选择返回具体参数
+        """
         async for result in self._handle_hardware_query(event, "gpu"):
             yield result
 
     async def initialize(self):
-        logger.info("硬件信息查询插件初始化完成（v2.0，修复名称和冷却逻辑）")
+        logger.info("硬件信息查询插件初始化完成（v0.0.2）")
         logger.info("依赖库：aiohttp、requests、beautifulsoup4、lxml、pillow>=9.0.0")
         
         if not os.path.exists(self.mandatory_font):
