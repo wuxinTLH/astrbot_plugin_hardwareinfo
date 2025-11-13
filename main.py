@@ -4,7 +4,7 @@ import re
 import asyncio
 import sys
 from urllib.parse import urljoin, quote
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent 
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.core.utils.io import download_image_by_url
@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
     "astrbot_plugin_hardwareinfo",
     "SakuraMikku",
     "硬件信息查询（CPU/GPU搜索+天梯图+参数图片）",
-    "0.0.2",
+    "0.0.3", 
     "https://github.com/wuxinTLH/astrbot_plugin_hardwareinfo"
 )
 class HardwareInfoPlugin(Star):
@@ -152,6 +152,27 @@ class HardwareInfoPlugin(Star):
         self.search_cache: Dict[Tuple[str, str], Dict[str, Dict]] = {}
         self.last_called_times: Dict[Tuple[str, str], Dict[str, float]] = {}
 
+        # -------------------------- 新增/修改：反爬相关配置 --------------------------
+        # 增强型请求头（模拟真实浏览器）
+        self.request_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": self.tpu_base[hardware_type] if 'hardware_type' in locals() else self.tpu_base["cpu"],
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+        }
+        # 用户自定义Cookie（用于绕过已完成的验证）
+        self.custom_cookies = config.get("custom_cookies", {})
+        # 请求重试次数
+        self.max_retries = config.get("max_retries", 2)
+
     def _get_identity(self, event: AstrMessageEvent) -> Tuple[str, str]:
         """强化群组ID获取，确保跨群组隔离"""
         # 获取用户ID
@@ -205,7 +226,8 @@ class HardwareInfoPlugin(Star):
         
         try:
             logger.info(f"[{hardware_type}] 下载天梯图：{ranking['url']}")
-            resp = requests.get(ranking["url"], timeout=15)
+            # 下载天梯图时也添加请求头
+            resp = requests.get(ranking["url"], headers=self.request_headers, timeout=15)
             if resp.status_code == 200:
                 with open(local_path, "wb") as f:
                     f.write(resp.content)
@@ -228,27 +250,76 @@ class HardwareInfoPlugin(Star):
         html = re.sub(r'class="[\w\d]{15,}"', '', html)
         return html
 
-    async def _fetch_tpu_html(self, url: str) -> str:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=15) as resp:
-                    if resp.status == 200:
-                        html = await resp.text()
-                        cleaned_html = self._clean_html(html)
-                        return cleaned_html
-                    logger.error(f"请求失败：URL={url}，状态码{resp.status}")
-                    return ""
-        except Exception as e:
+    def _is_verification_page(self, html: str) -> bool:
+        """新增：识别techpowerup机器人验证页面"""
+        verification_keywords = [
+            "Automated bot check",
+            "Your browser must support Javascript",
+            "机器人验证",
+            "cloudflare",
+            "please enable JavaScript"
+        ]
+        return any(keyword in html for keyword in verification_keywords)
+
+    async def _fetch_tpu_html(self, url: str, hardware_type: str) -> Tuple[str, bool]:
+        """修改：增强请求逻辑，返回（HTML内容，是否为验证页面）"""
+        # 动态更新Referer为对应硬件类型的基础URL
+        headers = self.request_headers.copy()
+        headers["Referer"] = self.tpu_base[hardware_type]
+        
+        # 异步请求（优先）
+        for attempt in range(self.max_retries):
             try:
-                resp = requests.get(url, timeout=15)
-                if resp.status_code == 200:
-                    cleaned_html = self._clean_html(resp.text())
-                    return cleaned_html
-                logger.error(f"同步请求失败：URL={url}，状态码{resp.status_code}")
-                return ""
-            except Exception as e2:
-                logger.error(f"请求异常：{str(e2)}")
-                return ""
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        url, 
+                        headers=headers,
+                        cookies=self.custom_cookies,
+                        timeout=15,
+                        ssl=False  # 忽略SSL验证（部分环境必需）
+                    ) as resp:
+                        if resp.status == 200:
+                            html = await resp.text()
+                            cleaned_html = self._clean_html(html)
+                            # 检查是否为验证页面
+                            if self._is_verification_page(cleaned_html):
+                                return "", True
+                            return cleaned_html, False
+                        logger.warning(f"异步请求失败（尝试{attempt+1}/{self.max_retries}）：URL={url}，状态码{resp.status}")
+            except aiohttp.ClientError as e:
+                logger.warning(f"异步请求异常（尝试{attempt+1}/{self.max_retries}）：{str(e)}")
+            except Exception as e:
+                logger.error(f"异步请求未知错误（尝试{attempt+1}/{self.max_retries}）：{str(e)}")
+            
+            # 重试间隔（指数退避）
+            await asyncio.sleep(2 ** attempt)
+        
+        # 同步请求（降级方案）
+        for attempt in range(self.max_retries):
+            try:
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    cookies=self.custom_cookies,
+                    timeout=15,
+                    verify=False  # 忽略SSL验证
+                )
+                if resp.status == 200:
+                    html = resp.text
+                    cleaned_html = self._clean_html(html)
+                    if self._is_verification_page(cleaned_html):
+                        return "", True
+                    return cleaned_html, False
+                logger.warning(f"同步请求失败（尝试{attempt+1}/{self.max_retries}）：URL={url}，状态码{resp.status_code}")
+            except requests.RequestException as e:
+                logger.warning(f"同步请求异常（尝试{attempt+1}/{self.max_retries}）：{str(e)}")
+            except Exception as e:
+                logger.error(f"同步请求未知错误（尝试{attempt+1}/{self.max_retries}）：{str(e)}")
+            
+            await asyncio.sleep(2 ** attempt)
+        
+        logger.error(f"请求URL={url}重试{self.max_retries}次后仍失败")
+        return "", False
 
     def _parse_tpu_results(self, hardware_type: str, html: str) -> list[dict]:
         soup = BeautifulSoup(html, "lxml")
@@ -257,7 +328,7 @@ class HardwareInfoPlugin(Star):
         if hardware_type == "cpu":
             cpu_table = soup.select_one('table.items-desktop-table')
             if not cpu_table:
-                logger.warning("[CPU] 未找到结果表格")
+                logger.warning("[CPU] 未找到结果表格（可能是验证页面或页面结构变化）")
                 return results
             
             all_trs = cpu_table.find_all("tr", recursive=False)
@@ -280,7 +351,7 @@ class HardwareInfoPlugin(Star):
         else:  # GPU解析（兼容Intel/NVIDIA/AMD）
             gpu_table = soup.select_one('div#list table.items-desktop-table')
             if not gpu_table:
-                logger.warning("[GPU] 未找到结果表格")
+                logger.warning("[GPU] 未找到结果表格（可能是验证页面或页面结构变化）")
                 return results
             
             all_tds = [td for td in gpu_table.find_all("td", recursive=False) 
@@ -520,13 +591,16 @@ class HardwareInfoPlugin(Star):
 
         return param_data, img_path
 
-    async def _get_hardware_detail(self, hardware_type: str, detail_url: str) -> tuple[List[str], str]:
+    async def _get_hardware_detail(self, hardware_type: str, detail_url: str) -> tuple[List[str], str, bool]:
+        """修改：返回（参数列表，图片路径，是否为验证页面）"""
         logger.info(f"[{hardware_type.upper()}] 请求详情页：{detail_url}")
-        html = await self._fetch_tpu_html(detail_url)
-        return self._parse_detail_info(hardware_type, html)
+        html, is_verify = await self._fetch_tpu_html(detail_url, hardware_type)
+        if is_verify:
+            return ["触发机器人验证，无法获取详情"], "", True
+        return self._parse_detail_info(hardware_type, html) + (False,)
 
     async def _handle_hardware_query(self, event: AstrMessageEvent, hardware_type: str) -> None:
-        """核心处理逻辑（修复跨群组缓存问题）"""
+        """核心处理逻辑（修复跨群组缓存问题+添加验证页面处理）"""
         identity = self._get_identity(event)
         raw_message = getattr(event, "message_str", "") or ""
         clean_message = self._clean_text(raw_message)
@@ -581,7 +655,25 @@ class HardwareInfoPlugin(Star):
             results = user_cache["results"]
             selected = results[idx]
             yield event.plain_result(f"[{hardware_type.upper()}] 正在生成「{selected['name']}」参数图片...")
-            param_data, img_path = await self._get_hardware_detail(hardware_type, selected["detail_url"])
+            param_data, img_path, is_verify = await self._get_hardware_detail(hardware_type, selected["detail_url"])
+            
+            if is_verify:
+                # 触发验证，给出解决方案
+                yield event.plain_result(
+                    f"[{hardware_type.upper()}] 触发 techpowerup 机器人验证！\n"
+                    "请按以下步骤解决：\n"
+                    f"1. 用浏览器访问：{selected['detail_url']}\n"
+                    "2. 完成验证码（滑块/图片验证）\n"
+                    "3. 复制浏览器Cookie（F12 → Application → Cookies → www.techpowerup.com）\n"
+                    "4. 在插件配置中添加：\n"
+                    '   "custom_cookies": {\n'
+                    '       "cookie名1": "cookie值1",\n'
+                    '       "cookie名2": "cookie值2"\n'
+                    '   }\n'
+                    "5. 重启插件后重试"
+                )
+                return
+            
             if img_path and os.path.exists(img_path):
                 yield event.image_result(img_path)
             else:
@@ -595,7 +687,26 @@ class HardwareInfoPlugin(Star):
                 
             yield event.plain_result(f"[{hardware_type.upper()}] 正在搜索：{param}（1分钟有效）")
             search_url = f"{self.tpu_base[hardware_type]}?q={quote(param)}"
-            html = await self._fetch_tpu_html(search_url)
+            html, is_verify = await self._fetch_tpu_html(search_url, hardware_type)
+            
+            if is_verify:
+                # 触发验证，给出解决方案
+                yield event.plain_result(
+                    f"[{hardware_type.upper()}] 触发 techpowerup 机器人验证！\n"
+                    "请按以下步骤解决：\n"
+                    f"1. 用浏览器访问：{search_url}\n"
+                    "2. 完成验证码（滑块/图片验证）\n"
+                    "3. 复制浏览器Cookie（F12 → Application → Cookies → www.techpowerup.com）\n"
+                    "4. 在插件配置中添加：\n"
+                    '   "custom_cookies": {\n'
+                    '       "cookie名1": "cookie值1",\n'
+                    '       "cookie名2": "cookie值2"\n'
+                    '   }\n'
+                    "5. 重启插件后重试"
+                )
+                self.last_called_times.setdefault(identity, {})[hardware_type] = time.time()
+                return
+            
             results = self._parse_tpu_results(hardware_type, html) if html else []
             
             if not results:
@@ -637,7 +748,7 @@ class HardwareInfoPlugin(Star):
             yield result
 
     async def initialize(self):
-        logger.info("硬件信息查询插件初始化完成（v0.0.2）")
+        logger.info("硬件信息查询插件初始化完成（v0.0.3，优化反爬处理）")
         logger.info("依赖库：aiohttp、requests、beautifulsoup4、lxml、pillow>=9.0.0")
         
         if not os.path.exists(self.mandatory_font):
@@ -645,6 +756,12 @@ class HardwareInfoPlugin(Star):
                 f"未找到强制字体文件：{self.mandatory_font}\n"
                 "请下载simhei.ttf并放置到该目录，否则中文可能显示异常"
             )
+        
+        # 提示Cookie配置
+        if self.custom_cookies:
+            logger.info("已加载自定义Cookie，将用于绕过techpowerup验证")
+        else:
+            logger.info("未配置自定义Cookie，若触发验证请参考指令提示添加")
 
     async def terminate(self):
         logger.info("硬件信息查询插件已卸载")
