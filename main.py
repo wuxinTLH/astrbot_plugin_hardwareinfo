@@ -24,7 +24,7 @@ from astrbot.api import AstrBotConfig, logger
     "astrbot_plugin_hardwareinfo",
     "SakuraMikku",
     "硬件信息查询（CPU/GPU搜索+天梯图+参数图片）",
-    "0.0.4",
+    "0.0.5",
     "https://github.com/wuxinTLH/astrbot_plugin_hardwareinfo",
 )
 class HardwareInfoPlugin(Star):
@@ -184,7 +184,7 @@ class HardwareInfoPlugin(Star):
         # 请求头模板（Referer 在请求中动态设置）
         self.request_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,imageapng,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Connection": "keep-alive",
             "Cache-Control": "max-age=0",
@@ -252,11 +252,17 @@ class HardwareInfoPlugin(Star):
         return user_id, group_id
 
     def _clean_text(self, text: str) -> str:
-        """清理消息文本，去掉 at 标记等"""
+        """清理消息文本，去掉 at 标记等，并去除开头的斜杠以兼容 /cpu /gpu 形式"""
         if not isinstance(text, str):
             return ""
+        # 去掉常见的 At 标签或 mention 表示
         text = re.sub(r"\[At:[^\]]+\]", "", text)
-        text = re.sub(r"<at[^>]+>.*?</at>", "", text)
+        text = re.sub(r"<at[^>]*>.*?</at>", "", text, flags=re.I | re.S)
+        text = text.strip()
+        # 去掉开头的多种斜杠或分隔符（半角/反斜杠/全角斜杠等）
+        text = text.lstrip("/\\／﹨")
+        # 将连续空白归一
+        text = re.sub(r"\s+", " ", text)
         return text.strip()
 
     def _is_on_cooldown(self, identity: Tuple[str, str], hardware_type: str) -> Tuple[bool, int]:
@@ -654,7 +660,11 @@ class HardwareInfoPlugin(Star):
     # -------------------- 主处理逻辑 --------------------
     async def _handle_hardware_query(self, event: AstrMessageEvent, hardware_type: str):
         identity = self._get_identity(event)
-        raw_message = getattr(event, "message_str", "") or ""
+        # 兼容不同 event 字段名：优先 message_str，其次 message（部分平台）
+        raw_message = getattr(event, "message_str", None)
+        if not raw_message:
+            raw_message = getattr(event, "message", "") or ""
+        raw_message = raw_message or ""
         clean_message = self._clean_text(raw_message)
         logger.info(f"[用户{identity[0]}@群组{identity[1]}] 指令：{clean_message}")
 
@@ -672,6 +682,7 @@ class HardwareInfoPlugin(Star):
         cmd = parts[0].lower() if parts else ""
         param = parts[1].strip() if len(parts) >= 2 else None
 
+        # 如果用户直接发送 "cpu" 或 "/cpu"（clean_text 已处理斜杠），cmd 会是 "cpu"
         if cmd != hardware_type:
             yield event.plain_result(f"[{hardware_type.upper()}] 指令格式错误！正确用法如上")
             return
