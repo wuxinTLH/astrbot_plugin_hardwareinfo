@@ -26,7 +26,7 @@ from astrbot.api import AstrBotConfig, logger
 @register(
     "astrbot_plugin_hardwareinfo",
     "SakuraMikku",
-    "硬件信息查询（CPU/GPU搜索+天梯图+参数图片）",
+    "硬件信息查询(CPU/GPU搜索+天梯图+参数图片)",
     "0.0.8",
     "https://github.com/wuxinTLH/astrbot_plugin_hardwareinfo",
 )
@@ -1067,13 +1067,13 @@ class HardwareInfoPlugin(Star):
     #  前缀 / 可选，指令词不区分大小写
     # ══════════════════════════════════════════
 
-    @filter.regex(r"^[/／]?cpu(\s+.*)?$", re.IGNORECASE)
+    @filter.regex(r"(?i)^[/／]?cpu(\s+.*)?$")
     async def cpu_info(self, event: AstrMessageEvent):
         """查询 CPU 天梯图 / 搜索型号 / 查看参数"""
         async for r in self._handle_hardware_query(event, "cpu"):
             yield r
 
-    @filter.regex(r"^[/／]?gpu(\s+.*)?$", re.IGNORECASE)
+    @filter.regex(r"(?i)^[/／]?gpu(\s+.*)?$")
     async def gpu_info(self, event: AstrMessageEvent):
         """查询 GPU 天梯图 / 搜索型号 / 查看参数"""
         async for r in self._handle_hardware_query(event, "gpu"):
